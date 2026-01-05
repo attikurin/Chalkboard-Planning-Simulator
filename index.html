@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>板書計画シミュレーター</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts (手書き風フォント: Klee One) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Klee+One:wght@400;600&display=swap" rel="stylesheet">
+    
+    <!-- Fabric.js (Canvas操作ライブラリ) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+    
+    <!-- Font Awesome (Icons) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        body {
+            font-family: "Helvetica Neue", Arial, "Hiragino Kaku Gothic ProN", "Hiragino Sans", Meiryo, sans-serif;
+            overflow: hidden; /* アプリっぽくスクロール禁止 */
+            touch-action: none;
+        }
+
+        /* 黒板モードのテクスチャ感 */
+        .bg-blackboard {
+            background-color: #1a4530;
+            background-image: 
+                radial-gradient(circle at 50% 50%, rgba(255,255,255,0.05) 0%, transparent 60%),
+                repeating-linear-gradient(45deg, rgba(255,255,255,0.02) 0px, rgba(255,255,255,0.02) 2px, transparent 2px, transparent 10px);
+        }
+
+        /* ホワイトボードモード */
+        .bg-whiteboard {
+            background-color: #f8f9fa;
+            background-image: radial-gradient(#dee2e6 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+
+        /* キャンバス上のテキスト用フォント */
+        .handwritten {
+            font-family: 'Klee One', cursive;
+        }
+
+        /* ツールバーのアクティブ状態 */
+        .tool-btn.active {
+            background-color: #e2e8f0;
+            color: #1e293b;
+            border-color: #3b82f6;
+        }
+        .bg-blackboard .tool-btn.active {
+            background-color: rgba(255,255,255,0.2);
+            color: white;
+        }
+
+        /* カラーパレットの選択状態 */
+        .color-btn.active {
+            transform: scale(1.2);
+            border: 2px solid #cbd5e1;
+            box-shadow: 0 0 5px rgba(0,0,0,0.3);
+        }
+
+        /* 印刷設定 */
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+            #canvas-container {
+                width: 100% !important;
+                height: 100% !important;
+                border: none !important;
+                position: absolute;
+                top: 0;
+                left: 0;
+            }
+            body, html {
+                background: white;
+                height: 100%;
+                margin: 0;
+                padding: 0;
+                overflow: visible;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 h-screen flex flex-col text-gray-800 transition-colors duration-300" id="main-body">
+
+    <!-- ヘッダー -->
+    <header class="h-14 bg-white border-b flex items-center justify-between px-4 shadow-sm z-10 no-print">
+        <div class="flex items-center gap-2">
+            <i class="fas fa-chalkboard-teacher text-emerald-600 text-xl"></i>
+            <h1 class="font-bold text-lg tracking-wide text-gray-700">板書計画シミュレーター</h1>
+        </div>
+
+        <div class="flex items-center gap-4">
+            <!-- モード切替 -->
+            <div class="bg-gray-100 p-1 rounded-lg flex text-sm">
+                <button id="mode-bb" class="px-3 py-1 rounded-md bg-emerald-700 text-white shadow-sm transition-all" onclick="setBoardMode('blackboard')">黒板</button>
+                <button id="mode-wb" class="px-3 py-1 rounded-md text-gray-600 hover:bg-gray-200 transition-all" onclick="setBoardMode('whiteboard')">WB</button>
+            </div>
+
+            <!-- アクションボタン -->
+            <button onclick="downloadImage()" class="text-gray-600 hover:text-blue-600 px-2" title="画像保存">
+                <i class="fas fa-camera"></i> <span class="hidden sm:inline text-xs">保存</span>
+            </button>
+            <button onclick="window.print()" class="text-gray-600 hover:text-blue-600 px-2" title="印刷/PDF">
+                <i class="fas fa-print"></i> <span class="hidden sm:inline text-xs">印刷</span>
+            </button>
+            <button onclick="clearCanvas()" class="text-red-500 hover:text-red-700 px-2" title="全消去">
+                <i class="fas fa-trash-alt"></i> <span class="hidden sm:inline text-xs">クリア</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- メインエリア -->
+    <div class="flex-1 flex overflow-hidden relative">
+        
+        <!-- 左サイドバー（ツール） -->
+        <aside class="w-16 bg-white border-r flex flex-col items-center py-4 gap-4 shadow-sm z-10 no-print">
+            
+            <!-- ツール選択 -->
+            <div class="flex flex-col gap-2 w-full px-2">
+                <button class="tool-btn active w-full aspect-square rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 transition-colors border border-transparent" onclick="setTool('select')" title="選択/移動">
+                    <i class="fas fa-mouse-pointer"></i>
+                </button>
+                <button class="tool-btn w-full aspect-square rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 transition-colors border border-transparent" onclick="setTool('draw')" title="チョーク (手書き)">
+                    <i class="fas fa-pen"></i>
+                </button>
+                <button class="tool-btn w-full aspect-square rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 transition-colors border border-transparent" onclick="addText()" title="テキスト入力">
+                    <i class="fas fa-font"></i>
+                </button>
+                <button class="tool-btn w-full aspect-square rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 transition-colors border border-transparent" onclick="setTool('eraser')" title="消しゴム">
+                    <i class="fas fa-eraser"></i>
+                </button>
+            </div>
+
+            <div class="w-8 h-px bg-gray-200 my-1"></div>
+
+            <!-- 図形 -->
+            <div class="flex flex-col gap-2 w-full px-2">
+                <button class="tool-btn w-full aspect-square rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 transition-colors border border-transparent" onclick="addShape('rect')" title="四角形">
+                    <i class="far fa-square"></i>
+                </button>
+                <button class="tool-btn w-full aspect-square rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 transition-colors border border-transparent" onclick="addShape('arrow')" title="矢印">
+                    <i class="fas fa-long-arrow-alt-right"></i>
+                </button>
+            </div>
+
+            <div class="w-8 h-px bg-gray-200 my-1"></div>
+
+            <!-- 色選択 -->
+            <div class="flex flex-col gap-3 items-center">
+                <button class="color-btn w-6 h-6 rounded-full bg-white border border-gray-300 shadow-sm" onclick="setColor('#ffffff')" data-color="#ffffff" title="白"></button>
+                <button class="color-btn w-6 h-6 rounded-full bg-yellow-300 border border-yellow-400 shadow-sm" onclick="setColor('#fde047')" data-color="#fde047" title="黄"></button>
+                <button class="color-btn w-6 h-6 rounded-full bg-red-400 border border-red-500 shadow-sm" onclick="setColor('#f87171')" data-color="#f87171" title="赤"></button>
+                <button class="color-btn w-6 h-6 rounded-full bg-blue-400 border border-blue-500 shadow-sm" onclick="setColor('#60a5fa')" data-color="#60a5fa" title="青"></button>
+                <button class="color-btn w-6 h-6 rounded-full bg-green-400 border border-green-500 shadow-sm hidden" id="green-chalk" onclick="setColor('#4ade80')" data-color="#4ade80" title="緑"></button>
+                <button class="color-btn w-6 h-6 rounded-full bg-black border border-gray-600 shadow-sm hidden" id="black-pen" onclick="setColor('#1f2937')" data-color="#1f2937" title="黒"></button>
+            </div>
+            
+            <div class="mt-auto flex flex-col gap-2 w-full px-2">
+                 <button class="tool-btn w-full aspect-square rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-100 transition-colors border border-transparent" onclick="toggleGrid()" title="グリッド表示切替">
+                    <i class="fas fa-border-all"></i>
+                </button>
+            </div>
+        </aside>
+
+        <!-- キャンバスエリア -->
+        <main class="flex-1 bg-gray-200 relative overflow-hidden flex items-center justify-center p-4">
+            <div id="canvas-wrapper" class="shadow-2xl relative transition-all duration-300">
+                <canvas id="c"></canvas>
+            </div>
+            
+            <!-- ヒントメッセージ -->
+            <div id="status-message" class="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-70 text-white px-4 py-2 rounded-full text-sm pointer-events-none transition-opacity opacity-0 no-print">
+                保存しました
+            </div>
+        </main>
+
+        <!-- 右サイドバー（スナップショット） -->
+        <aside class="w-20 sm:w-24 bg-white border-l flex flex-col items-center py-4 gap-4 shadow-sm overflow-y-auto no-print">
+            <h3 class="text-xs font-bold text-gray-500 mb-1">比較用</h3>
+            <button onclick="saveSnapshot()" class="w-16 h-16 rounded-lg border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 hover:text-emerald-600 hover:border-emerald-500 hover:bg-emerald-50 transition-all gap-1">
+                <i class="fas fa-plus text-xl"></i>
+                <span class="text-[10px]">保存</span>
+            </button>
+            
+            <div id="snapshot-list" class="flex flex-col gap-3 w-full items-center px-1">
+                <!-- スナップショットがここに追加される -->
+            </div>
+        </aside>
+
+    </div>
+
+<script>
+    // --- 初期設定 ---
+    const canvas = new fabric.Canvas('c', {
+        isDrawingMode: false,
+        selection: true
+    });
+
+    // グローバル変数
+    let currentMode = 'blackboard'; // blackboard or whiteboard
+    let currentColor = '#ffffff';
+    let currentTool = 'select';
+    let isGridVisible = false;
+    let gridGroup = null;
+    let snapshots = [];
+
+    // キャンバスのリサイズ処理
+    const wrapper = document.getElementById('canvas-wrapper');
+    const resizeCanvas = () => {
+        const containerWidth = wrapper.parentElement.clientWidth - 40; // padding分引く
+        const containerHeight = wrapper.parentElement.clientHeight - 40;
+        
+        // 4:3 または 16:9 の比率を維持しつつ最大化
+        const aspectRatio = 4 / 3;
+        let w = containerWidth;
+        let h = w / aspectRatio;
+
+        if (h > containerHeight) {
+            h = containerHeight;
+            w = h * aspectRatio;
+        }
+
+        canvas.setWidth(w);
+        canvas.setHeight(h);
+        
+        // 背景を更新（グリッド再描画など）
+        updateBoardStyle();
+    };
+
+    window.addEventListener('resize', resizeCanvas);
+    // 初回ロード時の遅延実行（親要素のサイズ確定待ち）
+    setTimeout(resizeCanvas, 100);
+
+    // --- モード設定 ---
+    
+    function setBoardMode(mode) {
+        currentMode = mode;
+        const body = document.getElementById('main-body');
+        const modeBb = document.getElementById('mode-bb');
+        const modeWb = document.getElementById('mode-wb');
+        const blackPen = document.getElementById('black-pen');
+        const greenChalk = document.getElementById('green-chalk');
+
+        // UI切り替え
+        if (mode === 'blackboard') {
+            body.classList.remove('bg-gray-50');
+            modeBb.className = "px-3 py-1 rounded-md bg-emerald-700 text-white shadow-sm transition-all";
+            modeWb.className = "px-3 py-1 rounded-md text-gray-600 hover:bg-gray-200 transition-all";
+            
+            // 色リセット（白黒反転など）
+            blackPen.classList.add('hidden');
+            greenChalk.classList.remove('hidden');
+            if (currentColor === '#1f2937') setColor('#ffffff'); // 黒選択中なら白へ
+        } else {
+            body.classList.add('bg-gray-50');
+            modeWb.className = "px-3 py-1 rounded-md bg-white border border-gray-300 text-gray-800 shadow-sm transition-all";
+            modeBb.className = "px-3 py-1 rounded-md text-gray-600 hover:bg-gray-200 transition-all";
+
+            // 色リセット
+            blackPen.classList.remove('hidden');
+            greenChalk.classList.add('hidden');
+            if (currentColor === '#ffffff') setColor('#1f2937'); // 白選択中なら黒へ
+        }
+
+        updateBoardStyle();
+    }
+
+    function updateBoardStyle() {
+        // キャンバスラッパーのCSSクラスを操作
+        const canvasEl = document.querySelector('.canvas-container');
+        
+        if (currentMode === 'blackboard') {
+            canvasEl.style.backgroundColor = '#1a4530';
+            // CSSで定義した黒板テクスチャを適用
+            canvasEl.classList.add('bg-blackboard');
+            canvasEl.classList.remove('bg-whiteboard');
+            canvas.setBackgroundColor(null, canvas.renderAll.bind(canvas)); // CSS背景を見せるためnull
+        } else {
+            canvasEl.style.backgroundColor = '#ffffff';
+            canvasEl.classList.add('bg-whiteboard');
+            canvasEl.classList.remove('bg-blackboard');
+            canvas.setBackgroundColor(null, canvas.renderAll.bind(canvas));
+        }
+
+        // グリッド再描画
+        if (isGridVisible) drawGrid();
+    }
+
+    // --- ツール機能 ---
+
+    function setTool(tool) {
+        currentTool = tool;
+        canvas.isDrawingMode = (tool === 'draw');
+        
+        // 消しゴムモードの場合の処理
+        if (tool === 'eraser') {
+            canvas.defaultCursor = 'not-allowed';
+            canvas.discardActiveObject();
+            canvas.requestRenderAll();
+        } else {
+            canvas.defaultCursor = 'default';
+        }
+
+        // ブラシ設定
+        if (tool === 'draw') {
+            canvas.freeDrawingBrush = new fabric.PencilBrush(canvas);
+            canvas.freeDrawingBrush.color = currentColor;
+            canvas.freeDrawingBrush.width = 4;
+            // チョークっぽさ（影なしでシンプルに）
+            canvas.freeDrawingBrush.shadow = new fabric.Shadow({
+                blur: 0,
+                offsetX: 0,
+                offsetY: 0,
+                color: currentColor
+            });
+        }
+
+        // UI更新
+        document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
+        // アイコンマッチングは簡易的
+        const icons = {
+            'select': 'fa-mouse-pointer',
+            'draw': 'fa-pen',
+            'eraser': 'fa-eraser'
+        };
+        // テキストと図形はボタンクリック時に即時実行なのでここには含まない
+        
+        // 該当ボタンを探してactiveにする（簡易実装）
+        const btns = document.querySelectorAll('.tool-btn');
+        if(tool === 'select') btns[0].classList.add('active');
+        if(tool === 'draw') btns[1].classList.add('active');
+        if(tool === 'eraser') btns[3].classList.add('active');
+    }
+
+    function setColor(color) {
+        currentColor = color;
+        
+        // 描画モードならブラシ色更新
+        if (canvas.freeDrawingBrush) {
+            canvas.freeDrawingBrush.color = color;
+        }
+
+        // 選択中のオブジェクトがあれば色変更
+        const activeObj = canvas.getActiveObject();
+        if (activeObj) {
+            if (activeObj.type === 'i-text' || activeObj.type === 'path') {
+                activeObj.set({ fill: color, stroke: color });
+            } else if (activeObj.type === 'rect' || activeObj.type === 'circle') {
+                activeObj.set({ stroke: color });
+            } else if (activeObj.type === 'line' || activeObj.type === 'triangle') {
+                activeObj.set({ fill: color, stroke: color });
+            }
+            canvas.requestRenderAll();
+        }
+
+        // UI更新
+        document.querySelectorAll('.color-btn').forEach(btn => {
+            if (btn.dataset.color === color) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
+    }
+
+    // --- オブジェクト追加系 ---
+
+    function addText() {
+        setTool('select');
+        const text = new fabric.IText('テキストを入力', {
+            left: canvas.width / 2 - 50,
+            top: canvas.height / 2,
+            fontFamily: 'Klee One',
+            fill: currentColor,
+            fontSize: 24,
+            fontWeight: '600'
+        });
+        canvas.add(text);
+        canvas.setActiveObject(text);
+        text.selectAll();
+        text.enterEditing();
+    }
+
+    function addShape(type) {
+        setTool('select');
+        let shape;
+        const center = { x: canvas.width / 2, y: canvas.height / 2 };
+
+        if (type === 'rect') {
+            shape = new fabric.Rect({
+                left: center.x - 50,
+                top: center.y - 30,
+                fill: 'transparent',
+                stroke: currentColor,
+                strokeWidth: 3,
+                width: 100,
+                height: 60,
+                rx: 2, // 角丸
+                ry: 2
+            });
+        } else if (type === 'arrow') {
+            // 矢印は線と三角形のグループにするか、パスで描く
+            // 簡易的にパスで描画
+            const path = 'M 0 0 L 100 0 M 90 -10 L 100 0 L 90 10';
+            shape = new fabric.Path(path, {
+                left: center.x - 50,
+                top: center.y,
+                fill: 'transparent',
+                stroke: currentColor,
+                strokeWidth: 3,
+                strokeLineCap: 'round',
+                strokeLineJoin: 'round',
+                scaleX: 1,
+                scaleY: 1
+            });
+        }
+
+        if (shape) {
+            canvas.add(shape);
+            canvas.setActiveObject(shape);
+        }
+    }
+
+    // --- キャンバスイベント ---
+
+    // クリック処理（消しゴムなど）
+    canvas.on('mouse:down', function(options) {
+        if (currentTool === 'eraser' && options.target) {
+            canvas.remove(options.target);
+            canvas.discardActiveObject();
+        }
+    });
+
+    // キーボードショートカット
+    window.addEventListener('keydown', function(e) {
+        if (e.key === 'Delete' || e.key === 'Backspace') {
+            // テキスト編集中は消さない
+            const activeObj = canvas.getActiveObject();
+            if (activeObj && !activeObj.isEditing) {
+                const activeObjects = canvas.getActiveObjects();
+                if (activeObjects.length) {
+                    canvas.discardActiveObject();
+                    activeObjects.forEach(function(obj) {
+                        canvas.remove(obj);
+                    });
+                }
+            }
+        }
+    });
+
+    // --- グリッド ---
+    function toggleGrid() {
+        isGridVisible = !isGridVisible;
+        if (isGridVisible) {
+            drawGrid();
+            showStatus('グリッド ON');
+        } else {
+            removeGrid();
+            showStatus('グリッド OFF');
+        }
+    }
+
+    function drawGrid() {
+        removeGrid(); // 既存削除
+        
+        const gridSize = 50;
+        const width = canvas.width;
+        const height = canvas.height;
+        const gridColor = currentMode === 'blackboard' ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)';
+        
+        const lines = [];
+        // 横線
+        for (let i = 0; i < (height / gridSize); i++) {
+            lines.push(new fabric.Line([0, i * gridSize, width, i * gridSize], {
+                stroke: gridColor,
+                selectable: false,
+                evented: false,
+                strokeDashArray: [5, 5]
+            }));
+        }
+        // 縦線
+        for (let i = 0; i < (width / gridSize); i++) {
+            lines.push(new fabric.Line([i * gridSize, 0, i * gridSize, height], {
+                stroke: gridColor,
+                selectable: false,
+                evented: false,
+                strokeDashArray: [5, 5]
+            }));
+        }
+
+        gridGroup = new fabric.Group(lines, {
+            selectable: false,
+            evented: false
+        });
+        
+        canvas.add(gridGroup);
+        canvas.sendToBack(gridGroup);
+    }
+
+    function removeGrid() {
+        if (gridGroup) {
+            canvas.remove(gridGroup);
+            gridGroup = null;
+        }
+    }
+
+    // --- その他の機能 ---
+
+    function clearCanvas() {
+        if(confirm('キャンバスをすべて消去しますか？')) {
+            canvas.clear();
+            updateBoardStyle(); // 背景再設定
+        }
+    }
+
+    function showStatus(msg) {
+        const el = document.getElementById('status-message');
+        el.innerText = msg;
+        el.classList.remove('opacity-0');
+        setTimeout(() => {
+            el.classList.add('opacity-0');
+        }, 2000);
+    }
+
+    // --- スナップショット機能 ---
+
+    function saveSnapshot() {
+        const json = JSON.stringify(canvas.toJSON());
+        // サムネイル用に縮小画像を作成
+        const dataURL = canvas.toDataURL({
+            format: 'png',
+            multiplier: 0.2 // 軽量化
+        });
+
+        const snapshot = {
+            id: Date.now(),
+            json: json,
+            img: dataURL,
+            mode: currentMode
+        };
+
+        snapshots.push(snapshot);
+        renderSnapshots();
+        showStatus('案を保存しました');
+    }
+
+    function renderSnapshots() {
+        const list = document.getElementById('snapshot-list');
+        list.innerHTML = '';
+
+        snapshots.forEach((snap, index) => {
+            const div = document.createElement('div');
+            div.className = "w-16 flex flex-col items-center group relative";
+            
+            // 削除ボタン
+            const delBtn = document.createElement('button');
+            delBtn.innerHTML = '<i class="fas fa-times"></i>';
+            delBtn.className = "absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-10";
+            delBtn.onclick = (e) => {
+                e.stopPropagation();
+                deleteSnapshot(snap.id);
+            };
+
+            const img = document.createElement('img');
+            img.src = snap.img;
+            img.className = "w-16 h-12 object-cover border border-gray-300 rounded shadow-sm hover:ring-2 hover:ring-blue-400 cursor-pointer bg-gray-100";
+            img.onclick = () => loadSnapshot(snap.id);
+
+            const label = document.createElement('span');
+            label.innerText = `案 ${index + 1}`;
+            label.className = "text-[10px] text-gray-500 mt-0.5";
+
+            div.appendChild(delBtn);
+            div.appendChild(img);
+            div.appendChild(label);
+            list.appendChild(div);
+        });
+    }
+
+    function loadSnapshot(id) {
+        const snap = snapshots.find(s => s.id === id);
+        if (!snap) return;
+
+        // モード復元
+        if (snap.mode !== currentMode) {
+            setBoardMode(snap.mode);
+        }
+
+        canvas.loadFromJSON(snap.json, function() {
+            canvas.renderAll();
+            showStatus('案を読み込みました');
+            // グリッド状態のリセットなどは必要に応じて
+            if(isGridVisible) drawGrid();
+        });
+    }
+
+    function deleteSnapshot(id) {
+        snapshots = snapshots.filter(s => s.id !== id);
+        renderSnapshots();
+    }
+
+    // --- エクスポート ---
+
+    function downloadImage() {
+        // 背景色を含めるためにcanvas要素から直接ではなくfabricの機能を使う
+        // 現在の背景色を取得
+        const bgColor = currentMode === 'blackboard' ? '#1a4530' : '#ffffff';
+        
+        // 一時的に背景色を設定してエクスポート
+        const originalBg = canvas.backgroundColor;
+        canvas.backgroundColor = bgColor;
+        
+        const dataURL = canvas.toDataURL({
+            format: 'png',
+            quality: 1,
+            multiplier: 2 // 高解像度
+        });
+        
+        // 背景戻す
+        canvas.backgroundColor = originalBg;
+
+        const link = document.createElement('a');
+        link.download = `板書計画_${new Date().toLocaleDateString()}.png`;
+        link.href = dataURL;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    // 初期化実行
+    updateBoardStyle();
+    setColor('#ffffff'); // デフォルト色設定
+
+</script>
+</body>
+</html>
